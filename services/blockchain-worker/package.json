@@ -1,0 +1,17 @@
+{
+  "name": "cex-blockchain-worker",
+  "version": "1.0.0",
+  "description": "Blockchain scanner and deposit listener for CEX",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/**/*.test.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.6",
+    "@grpc/proto-loader": "^0.7.13",
+    "ethers": "^6.11.1",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.3"
+  }
+}

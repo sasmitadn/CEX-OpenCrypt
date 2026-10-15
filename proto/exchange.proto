@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package exchange;
+
+option php_namespace = "App\\Grpc\\Exchange";
+option php_metadata_namespace = "App\\Grpc\\GPBMetadata";
+
+// Matching Engine Service (Implemented in C++)
+service MatchingEngineService {
+  rpc PlaceOrder (OrderRequest) returns (OrderResponse);
+  rpc CancelOrder (CancelRequest) returns (CancelResponse);
+  rpc GetOrderBookDepth (DepthRequest) returns (DepthResponse);
+}
+
+// Blockchain Worker Service (Implemented in Node.js / Go)
+service BlockchainService {
+  rpc GenerateDepositAddress (AddressRequest) returns (AddressResponse);
+  rpc ProcessWithdrawal (WithdrawRequest) returns (WithdrawResponse);
+  rpc GetTxStatus (TxStatusRequest) returns (TxStatusResponse);
+}
+
+message OrderRequest {
+  string order_id = 1;
+  uint64 user_id = 2;
+  string symbol = 3;       // e.g. "BTC_USDT"
+  string side = 4;         // "BUY" or "SELL"
+  string order_type = 5;   // "LIMIT" or "MARKET"
+  string price = 6;        // Fixed-point string (e.g. "65000.50")
+  string quantity = 7;     // Fixed-point string (e.g. "0.5")
+  int64 timestamp = 8;
+}
+
+message OrderResponse {
+  string order_id = 1;
+  string status = 2;       // "ACCEPTED", "FILLED", "PARTIALLY_FILLED", "REJECTED"
+  string message = 3;
+}
+
+message CancelRequest {
+  string order_id = 1;
+  string symbol = 2;
+  uint64 user_id = 3;
+}
+
+message CancelResponse {
+  string order_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message DepthRequest {
+  string symbol = 1;
+  int32 limit = 2;
+}
+
+message DepthResponse {
+  string symbol = 1;
+  repeated DepthLevel bids = 2;
+  repeated DepthLevel asks = 3;
+}
+
+message DepthLevel {
+  string price = 1;
+  string quantity = 2;
+}
+
+message AddressRequest {
+  uint64 user_id = 1;
+  string network = 2;      // "ETH", "TRON", "BSC", "BTC"
+}
+
+message AddressResponse {
+  string address = 1;
+  string memo = 2;
+  string network = 3;
+}
+
+message WithdrawRequest {
+  string withdrawal_id = 1;
+  uint64 user_id = 2;
+  string currency = 3;
+  string network = 4;
+  string to_address = 5;
+  string amount = 6;
+}
+
+message WithdrawResponse {
+  string tx_hash = 1;
+  string status = 2;       // "PENDING", "BROADCASTED", "FAILED"
+  string error = 3;
+}
+
+message TxStatusRequest {
+  string tx_hash = 1;
+  string network = 2;
+}
+
+message TxStatusResponse {
+  string tx_hash = 1;
+  int32 confirmations = 2;
+  string status = 3;
+}

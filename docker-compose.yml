@@ -1,0 +1,241 @@
+services:
+  # =========================================================================
+  # 1. DATABASE (PostgreSQL)
+  # =========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: cex_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-cex_db}
+      POSTGRES_USER: ${DB_USERNAME:-cex_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret123}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cex_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-cex_user} -d ${DB_DATABASE:-cex_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 2. IN-MEMORY CACHE & PUB/SUB (Redis)
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: cex_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-secretredis}"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cex_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-secretredis}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 3. BACKEND REST API (Laravel Octane - FrankenPHP)
+  # =========================================================================
+  laravel-api:
+    build:
+      context: ./services/laravel-api
+      dockerfile: Dockerfile
+    container_name: cex_laravel_api
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_KEY: ${APP_KEY:-}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      OCTANE_SERVER: frankenphp
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cex_db}
+      DB_USERNAME: ${DB_USERNAME:-cex_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret123}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secretredis}
+      REDIS_PORT: 6379
+      MATCHING_ENGINE_GRPC_HOST: matching-engine:50051
+      BLOCKCHAIN_WORKER_GRPC_HOST: blockchain-worker:50052
+    volumes:
+      - ./services/laravel-api:/app
+      - ./proto:/app/proto
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cex_network
+
+  # =========================================================================
+  # 4. BLOCKCHAIN WORKER (Deposit Listener & Withdrawal Sweeper)
+  # =========================================================================
+  blockchain-worker:
+    build:
+      context: ./services/blockchain-worker
+      dockerfile: Dockerfile
+    container_name: cex_blockchain_worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 50052
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secretredis}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cex_db}
+      DB_USER: ${DB_USERNAME:-cex_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret123}
+      RPC_ETH_MAINNET: ${RPC_ETH_MAINNET:-https://rpc.ankr.com/eth}
+      RPC_BSC_MAINNET: ${RPC_BSC_MAINNET:-https://rpc.ankr.com/bsc}
+      RPC_ETH_SEPOLIA: ${RPC_ETH_SEPOLIA:-https://ethereum-sepolia-rpc.publicnode.com}
+      NETWORK_DEFAULT: ${NETWORK_DEFAULT:-SEPOLIA}
+      MASTER_XPUB_EVM: ${MASTER_XPUB_EVM:-xpub6CPo26VfaxGaMiXN7sgbFke3a9p2PMEvckDidN1NdQqhtsrN7NZoxRaKZYdQQLtjG7x6W283bBufRxeMWG2Eko8LosY2vy8kZudeWzEDEKA}
+      MASTER_MNEMONIC: ${MASTER_MNEMONIC:-"endorse hire setup spell output yard day hood lake jazz spoon office"}
+      HOT_WALLET_PRIVATE_KEY: ${HOT_WALLET_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      USDT_CONTRACT_SEPOLIA: ${USDT_CONTRACT_SEPOLIA:-0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0}
+    volumes:
+      - ./services/blockchain-worker:/app
+      - ./proto:/app/proto
+      - /app/node_modules
+    ports:
+      - "50052:50052" # gRPC server port
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cex_network
+
+  # =========================================================================
+  # 5. C++ MATCHING ENGINE (In-Memory Order Matching & Redis IPC)
+  # =========================================================================
+  matching-engine:
+    build:
+      context: ./services/matching-engine
+      dockerfile: Dockerfile
+    container_name: cex_matching_engine
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secretredis}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cex_network
+
+  # =========================================================================
+  # 6. LARAVEL SETTLEMENT WORKER (Consumes trades_queue & Updates Ledger)
+  # =========================================================================
+  settlement-worker:
+    build:
+      context: ./services/laravel-api
+      dockerfile: Dockerfile
+    container_name: cex_settlement_worker
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "cex:settle-trades"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_KEY: ${APP_KEY:-}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cex_db}
+      DB_USERNAME: ${DB_USERNAME:-cex_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret123}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secretredis}
+      REDIS_PORT: 6379
+    volumes:
+      - ./services/laravel-api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cex_network
+
+  # =========================================================================
+  # 7. LARAVEL SCHEDULER (Background Cron Worker)
+  # =========================================================================
+  scheduler:
+    build:
+      context: ./services/laravel-api
+      dockerfile: Dockerfile
+    container_name: cex_scheduler
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_KEY: ${APP_KEY:-}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cex_db}
+      DB_USERNAME: ${DB_USERNAME:-cex_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret123}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secretredis}
+      REDIS_PORT: 6379
+    volumes:
+      - ./services/laravel-api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cex_network
+
+  # =========================================================================
+  # 8. FRONTEND TRADING UI (React.js + Vite)
+  # =========================================================================
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: cex_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://laravel-api:8000
+    volumes:
+      - ./services/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - laravel-api
+    networks:
+      - cex_network
+
+networks:
+  cex_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
