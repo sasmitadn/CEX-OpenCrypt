@@ -267,6 +267,15 @@ class SettleTradesCommand extends Command
             $this->updateOrderStatus($makerOrder, $quantity, $quoteAmount);
             $this->updateOrderStatus($takerOrder, $quantity, $quoteAmount);
 
+            // -------------------------------------------------------------
+            // E. UPDATE OHLCV 1-MINUTE CANDLE
+            // -------------------------------------------------------------
+            try {
+                app(\App\Services\CandleService::class)->recordTrade($pair->id, $price, $quantity);
+            } catch (\Throwable $e) {
+                $this->warn("Failed to record candle: " . $e->getMessage());
+            }
+
             $this->info("Trade #{$trade->id} settled successfully: {$quantity} @ {$price} {$pair->symbol}");
             return $trade;
         });

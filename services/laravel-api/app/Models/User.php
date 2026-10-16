@@ -17,6 +17,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'role',
         'password',
         'status',
         'kyc_level',
@@ -26,6 +27,11 @@ class User extends Authenticatable
         'trade_password',
         'daily_withdraw_limit',
     ];
+
+    public function isAdmin(): bool
+    {
+        return strtoupper($this->role ?? '') === 'ADMIN';
+    }
 
     protected $hidden = [
         'password',

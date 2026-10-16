@@ -1,11 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { authApi, marketApi, walletApi, orderApi, setAuthToken, getAuthToken } from './api';
+import FullscreenAssets from './components/FullscreenAssets';
+import AdminDashboard from './components/AdminDashboard';
+import OnboardingHero from './components/OnboardingHero';
+import SearchableMarketSelector from './components/SearchableMarketSelector';
+import CandlestickChart from './components/CandlestickChart';
 
 export default function App() {
+  // Navigation View: 'TRADE' | 'ASSETS' | 'ADMIN'
+  const [viewMode, setViewMode] = useState('TRADE');
+
   const [user, setUser] = useState(null);
   const [markets, setMarkets] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState('BTC_USDT');
   const [depth, setDepth] = useState({ bids: [], asks: [] });
+  
+  // Progress bar ONLY for initial market change/load
+  const [isInitialMarketLoad, setIsInitialMarketLoad] = useState(false);
+  const isFirstLoadRef = useRef(true);
+
   const [wallets, setWallets] = useState([]);
   const [orders, setOrders] = useState([]);
   const [recentTrades, setRecentTrades] = useState([]);
@@ -22,33 +35,59 @@ export default function App() {
   // Modals
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // login or register
-  const [authEmail, setAuthEmail] = useState('trader@cex.com');
-  const [authPassword, setAuthPassword] = useState('password123');
-  const [authName, setAuthName] = useState('Pro Trader');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [showWalletModal, setShowWalletModal] = useState(false);
-  const [depositAddress, setDepositAddress] = useState(null);
-  const [withdrawCurrency, setWithdrawCurrency] = useState('USDT');
-  const [withdrawAddress, setWithdrawAddress] = useState('');
-  const [withdrawAmount, setWithdrawAmount] = useState('50');
-  const [withdrawStatus, setWithdrawStatus] = useState('');
-
-  // 1. Initial Load & Auth Check
+  // 1. Initial Load & Route Sync
   useEffect(() => {
     checkAuth();
     loadMarkets();
+
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    if (hash === '#admin' || path.includes('admin')) {
+      setViewMode('ADMIN');
+    } else if (hash === '#assets') {
+      setViewMode('ASSETS');
+    }
+
+    const handleHashChange = () => {
+      const currentHash = window.location.hash.toLowerCase();
+      if (currentHash === '#admin') setViewMode('ADMIN');
+      else if (currentHash === '#assets') setViewMode('ASSETS');
+      else if (currentHash === '#trade' || !currentHash) setViewMode('TRADE');
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // When currency / pair changes: trigger initial progressbar
+  useEffect(() => {
+    setIsInitialMarketLoad(true);
+    loadDepth(selectedMarket, true);
+    loadRecentTrades(selectedMarket);
+
+    // Background polling interval: does NOT trigger progress bar
     const interval = setInterval(() => {
-      loadDepth(selectedMarket);
+      loadDepth(selectedMarket, false);
       loadRecentTrades(selectedMarket);
-    }, 2000);
+    }, 2500);
+
     return () => clearInterval(interval);
   }, [selectedMarket]);
 
   useEffect(() => {
     if (user) {
-      loadWallets();
-      loadUserOrders();
+      if (user.role === 'ADMIN') {
+        setViewMode('ADMIN');
+        window.location.hash = '#admin';
+      } else {
+        loadWallets();
+        loadUserOrders();
+      }
     }
   }, [user, selectedMarket]);
 
@@ -56,7 +95,9 @@ export default function App() {
     if (!getAuthToken()) return;
     try {
       const res = await authApi.me();
-      if (res.success) setUser(res.data);
+      if (res.success) {
+        setUser(res.data);
+      }
     } catch {
       setAuthToken(null);
       setUser(null);
@@ -74,17 +115,22 @@ export default function App() {
     }
   }
 
-  async function loadDepth(symbol) {
+  async function loadDepth(symbol, isInitial = false) {
     try {
       const res = await marketApi.getDepth(symbol);
       if (res.success) {
         setDepth(res.data);
-        if (res.data.bids.length > 0 && orderType === 'LIMIT' && !price) {
+        if (res.data.bids.length > 0 && orderType === 'LIMIT' && isFirstLoadRef.current) {
           setPrice(res.data.bids[0][0]);
+          isFirstLoadRef.current = false;
         }
       }
     } catch (err) {
       // offline / mock depth
+    } finally {
+      if (isInitial) {
+        setTimeout(() => setIsInitialMarketLoad(false), 450);
+      }
     }
   }
 
@@ -130,26 +176,56 @@ export default function App() {
         setAuthToken(res.data.token);
         setUser(res.data.user);
         setShowAuthModal(false);
+        setAuthEmail('');
+        setAuthPassword('');
+        setAuthName('');
         loadWallets();
+        
+        // Auto-detect role: if user is admin and was on #admin, stay or open admin
+        if (res.data.user?.role === 'ADMIN' && window.location.hash === '#admin') {
+          setViewMode('ADMIN');
+        }
       }
     } catch (err) {
-      setAuthError(err.message);
+      setAuthError(err.message || 'Authentication failed. Please check credentials.');
     }
   }
 
   function handleLogout() {
-    authApi.logout().catch(() => { });
+    authApi.logout().catch(() => {});
     setAuthToken(null);
     setUser(null);
     setWallets([]);
     setOrders([]);
+    if (viewMode === 'ADMIN') {
+      setViewMode('TRADE');
+      window.location.hash = '#trade';
+    }
+  }
+
+  // Switch View Mode with Hash Sync
+  function switchView(mode) {
+    if (user?.role === 'ADMIN') {
+      setViewMode('ADMIN');
+      window.location.hash = '#admin';
+      return;
+    }
+    setViewMode(mode);
+    if (mode === 'ADMIN') window.location.hash = '#admin';
+    else if (mode === 'ASSETS') window.location.hash = '#assets';
+    else window.location.hash = '#trade';
   }
 
   // Handle Order Placement
   async function handleOrderSubmit(e) {
     e.preventDefault();
     if (!user) {
+      setAuthMode('login');
       setShowAuthModal(true);
+      return;
+    }
+    if (user?.role === 'ADMIN') {
+      setFormError('Administrator accounts are restricted from trading. Please use a trader account.');
       return;
     }
     setFormError('');
@@ -167,13 +243,13 @@ export default function App() {
 
       const res = await orderApi.placeOrder(payload);
       if (res.success) {
-        setFormSuccess(`Order ${orderSide} berhasil dibuat!`);
+        setFormSuccess(`Order ${orderSide} (${orderType}) executed successfully!`);
         loadWallets();
         loadUserOrders();
-        loadDepth(selectedMarket);
+        loadDepth(selectedMarket, false);
       }
     } catch (err) {
-      setFormError(err.message);
+      setFormError(err.message || 'Failed to place order.');
     } finally {
       setIsSubmitting(false);
     }
@@ -186,52 +262,37 @@ export default function App() {
       loadUserOrders();
       loadWallets();
     } catch (err) {
-      alert('Gagal membatalkan order: ' + err.message);
+      alert('Failed to cancel order: ' + err.message);
     }
   }
 
-  // Handle Faucet
-  async function handleFaucet(currency, amount) {
-    try {
-      const res = await walletApi.faucet(currency, amount);
-      if (res.success) {
-        alert(res.message);
-        loadWallets();
-      }
-    } catch (err) {
-      alert(err.message);
-    }
-  }
-
-  // Get Deposit Address
-  async function handleGetDepositAddress(currency) {
-    try {
-      const res = await walletApi.getDepositAddress(currency, 'SEPOLIA');
-      if (res.success) setDepositAddress(res.data);
-    } catch (err) {
-      alert(err.message);
-    }
-  }
-
-  // Handle Withdraw
-  async function handleWithdrawSubmit(e) {
-    e.preventDefault();
-    setWithdrawStatus('');
-    try {
-      const res = await walletApi.withdraw(withdrawCurrency, 'SEPOLIA', withdrawAddress, withdrawAmount);
-      if (res.success) {
-        setWithdrawStatus('Penarikan dana berhasil diajukan!');
-        loadWallets();
-      }
-    } catch (err) {
-      setWithdrawStatus('Error: ' + err.message);
-    }
-  }
-
-  // Current pair info
+  // Current Market Details & Fee Calculation
   const [baseCoin, quoteCoin] = selectedMarket.split('_');
   const baseWallet = wallets.find((w) => w.currency === baseCoin) || { balance: '0', locked: '0' };
   const quoteWallet = wallets.find((w) => w.currency === quoteCoin) || { balance: '0', locked: '0' };
+
+  const currentMarket = markets.find((m) => m.symbol === selectedMarket) || {};
+  const makerFeeRate = parseFloat(currentMarket.maker_fee_rate || '0.0015'); // 0.15%
+  const takerFeeRate = parseFloat(currentMarket.taker_fee_rate || '0.0025'); // 0.25%
+
+  const highestBid = depth.bids.length > 0 ? Number(depth.bids[0][0]) : null;
+  const lowestAsk = depth.asks.length > 0 ? Number(depth.asks[0][0]) : null;
+  const midPrice = highestBid && lowestAsk ? (highestBid + lowestAsk) / 2 : (highestBid || lowestAsk || 65000);
+
+  // Auto calculate order notional & fees
+  const orderPriceNumeric = orderType === 'LIMIT' ? (parseFloat(price) || 0) : midPrice;
+  const orderQtyNumeric = parseFloat(quantity) || 0;
+  const rawNotional = orderPriceNumeric * orderQtyNumeric;
+
+  // If LIMIT -> Maker fee, If MARKET -> Taker fee
+  const activeFeeRate = orderType === 'LIMIT' ? makerFeeRate : takerFeeRate;
+  const feeTypeLabel = orderType === 'LIMIT' ? 'Maker' : 'Taker';
+  const estimatedFeeAmount = rawNotional * activeFeeRate;
+  
+  // Total calculated with fee
+  const totalWithFee = orderSide === 'BUY'
+    ? (rawNotional + estimatedFeeAmount)
+    : Math.max(0, rawNotional - estimatedFeeAmount);
 
   // Hitung volume maksimum untuk visual depth bar (hijau/merah)
   const maxAskVolume = Math.max(
@@ -243,534 +304,587 @@ export default function App() {
     0.001
   );
 
-  // Catat harga order aktif milik user yang sedang login
   const userOpenPrices = new Set(
     orders
       .filter((o) => o.status === 'OPEN' || o.status === 'PENDING' || o.status === 'PARTIALLY_FILLED')
       .map((o) => Number(o.price).toFixed(2))
   );
 
-  const highestBid = depth.bids.length > 0 ? Number(depth.bids[0][0]) : null;
-  const lowestAsk = depth.asks.length > 0 ? Number(depth.asks[0][0]) : null;
   const spread = (highestBid && lowestAsk && lowestAsk >= highestBid) ? (lowestAsk - highestBid) : 0;
   const spreadPct = highestBid && lowestAsk && lowestAsk > 0 ? ((spread / lowestAsk) * 100).toFixed(2) : '0.00';
 
   return (
-    <div>
-      {/* 1. Header */}
+    <div className="cex-app-wrapper">
+      {/* 1. Consistent Top Navigation Bar across all views */}
       <header className="cex-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '30px' }}>
-          <div className="cex-logo">
-            <span>⚡ CEX CORE</span>
-            <span className="logo-badge">ULTRA FAST</span>
+        <div className="header-left">
+          <div className="cex-logo" onClick={() => switchView('TRADE')} style={{ cursor: 'pointer' }}>
+            <span className="logo-icon">⚡</span>
+            <span className="logo-text">CEX OPENCRYPT</span>
+            <span className="logo-badge">PRO</span>
           </div>
 
-          <div className="market-ticker-bar">
-            {markets.map((m) => (
-              <div
-                key={m.symbol}
-                className={`ticker-item ${selectedMarket === m.symbol ? 'active' : ''}`}
-                onClick={() => setSelectedMarket(m.symbol)}
-              >
-                <span style={{ fontWeight: 600 }}>{m.symbol.replace('_', '/')}</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-buy)' }}>
-                  ${Number(m.last_price).toLocaleString()}
-                </span>
+          {/* Searchable Market Dropdown Selector (Only for Traders / Non-Admin) */}
+          {(!user || user.role !== 'ADMIN') && (
+            <SearchableMarketSelector
+              markets={markets}
+              selectedMarket={selectedMarket}
+              onSelectMarket={(sym) => setSelectedMarket(sym)}
+            />
+          )}
+
+          {/* Primary View Navigation */}
+          <nav className="header-nav-links">
+            {(!user || user.role !== 'ADMIN') ? (
+              <>
+                <button
+                  className={`nav-link ${viewMode === 'TRADE' ? 'active' : ''}`}
+                  onClick={() => switchView('TRADE')}
+                >
+                  Spot Trade
+                </button>
+                <button
+                  className={`nav-link ${viewMode === 'ASSETS' ? 'active' : ''}`}
+                  onClick={() => {
+                    if (!user) {
+                      setAuthMode('login');
+                      setShowAuthModal(true);
+                    } else {
+                      switchView('ASSETS');
+                    }
+                  }}
+                >
+                  Assets & Portfolio
+                </button>
+              </>
+            ) : (
+              <div className="admin-portal-header-pill">
+                <span className="admin-portal-shield">🛡️</span>
+                <span className="admin-portal-text">Exchange Administration Portal</span>
               </div>
-            ))}
-          </div>
+            )}
+          </nav>
         </div>
 
-        <div className="nav-actions">
+        <div className="header-right">
           {user ? (
-            <>
-              <button className="btn-secondary" onClick={() => setShowWalletModal(true)}>
-                💼 Assets / Wallets
-              </button>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                {user.email}
+            <div className="user-profile-bar">
+              <div className="user-info-pill">
+                <span className="user-email-text">{user.email}</span>
+                <span className={`user-role-tag role-${(user.role || 'TRADER').toLowerCase()}`}>
+                  {user.role || 'TRADER'}
+                </span>
               </div>
-              <button className="btn-secondary" style={{ padding: '6px 12px' }} onClick={handleLogout}>
-                Logout
+              <button className="btn-logout" onClick={handleLogout}>
+                Sign Out
               </button>
-            </>
+            </div>
           ) : (
-            <button className="btn-primary" onClick={() => setShowAuthModal(true)}>
-              Login / Register
-            </button>
+            <div className="auth-actions-group">
+              <button
+                className="btn-signin-nav"
+                onClick={() => {
+                  setAuthMode('login');
+                  setShowAuthModal(true);
+                }}
+              >
+                Sign In
+              </button>
+              <button
+                className="btn-register-nav"
+                onClick={() => {
+                  setAuthMode('register');
+                  setShowAuthModal(true);
+                }}
+              >
+                Register
+              </button>
+            </div>
           )}
         </div>
       </header>
 
-      {/* 2. Main Exchange Layout */}
-      <div className="main-layout">
-        {/* Kolom 1: Order Book */}
-        <div className="cex-panel">
-          <div className="panel-header">
-            <span>Order Book</span>
-            <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>{selectedMarket}</span>
-          </div>
+      {/* 2. MAIN VIEW CONTROLLER */}
 
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {/* Header Asks */}
-            <div className="orderbook-sub-header ask-sub-header">
-              <span>🔴 SELL / ASKS</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Top 12</span>
-            </div>
+      {/* VIEW A: FULLSCREEN ASSETS & BALANCES */}
+      {viewMode === 'ASSETS' && (
+        <FullscreenAssets
+          user={user}
+          wallets={wallets}
+          onRefreshWallets={loadWallets}
+          onBackToTrade={() => switchView('TRADE')}
+        />
+      )}
 
-            {/* Asks (Jual - Merah) */}
-            <table className="orderbook-table">
-              <thead>
-                <tr>
-                  <th>Price ({quoteCoin})</th>
-                  <th>Size ({baseCoin})</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {depth.asks.length === 0 ? (
-                  <tr>
-                    <td colSpan="3" className="orderbook-empty">
-                      Belum ada antrean jual. Buat order SELL untuk menambah likuiditas!
-                    </td>
-                  </tr>
-                ) : (
-                  depth.asks.slice(0, 12).reverse().map(([p, v], i) => {
-                    const numP = Number(p);
-                    const numV = Number(v);
-                    const pct = Math.min(100, Math.max(6, Math.round((numV / maxAskVolume) * 100)));
-                    const isUserOrder = userOpenPrices.has(numP.toFixed(2));
-
-                    return (
-                      <tr
-                        key={`ask-${i}-${p}`}
-                        className={`orderbook-row ask-row ${isUserOrder ? 'user-order-active' : ''}`}
-                        onClick={() => {
-                          setPrice(numP.toFixed(2));
-                          setQuantity(numV.toFixed(4));
-                        }}
-                        style={{
-                          background: `linear-gradient(to left, rgba(239, 68, 68, 0.22) ${pct}%, transparent ${pct}%)`,
-                        }}
-                        title={`Klik untuk memasukkan harga: $${numP.toFixed(2)} (Ukuran: ${numV.toFixed(4)} ${baseCoin})`}
-                      >
-                        <td className="price-ask">
-                          {numP.toFixed(2)}
-                          {isUserOrder && <span className="user-order-dot" title="Order aktif milik Anda">● Anda</span>}
-                        </td>
-                        <td>{numV.toFixed(4)}</td>
-                        <td>{(numP * numV).toFixed(2)}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-
-            {/* Mid Price & Spread */}
-            <div className="mid-market-price">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                <span className="price-bid" style={{ fontSize: '1.25rem' }}>
-                  ${highestBid ? highestBid.toFixed(2) : (lowestAsk ? lowestAsk.toFixed(2) : '65,000.00')}
-                </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-                  {lowestAsk && highestBid ? (lowestAsk >= highestBid ? '▲' : '▼') : '—'}
-                </span>
-              </div>
-              <div className="spread-info">
-                Spread: ${spread.toFixed(2)} ({spreadPct}%)
+      {/* VIEW B: ADMIN PORTAL (/admin) - Auto-detected for Admin */}
+      {viewMode === 'ADMIN' && (
+        <>
+          {user && user.role === 'ADMIN' ? (
+            <AdminDashboard
+              user={user}
+              onBackToTrade={() => switchView('TRADE')}
+            />
+          ) : (
+            <div className="admin-gatekeeper-container">
+              <div className="admin-gate-card">
+                <div className="gate-icon">🛡️</div>
+                <h2>Administrator Access Required</h2>
+                <p>
+                  This portal is restricted to authorized exchange administrators. Please sign in with an administrator account to continue.
+                </p>
+                <button
+                  className="btn-primary-glow"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setShowAuthModal(true);
+                  }}
+                >
+                  Sign In with Admin Account
+                </button>
+                <button className="btn-text-back" onClick={() => switchView('TRADE')}>
+                  ← Return to Spot Trade
+                </button>
               </div>
             </div>
+          )}
+        </>
+      )}
 
-            {/* Header Bids */}
-            <div className="orderbook-sub-header bid-sub-header">
-              <span>🟢 BUY / BIDS</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Top 12</span>
-            </div>
+      {/* VIEW C: SPOT TRADING VIEW */}
+      {viewMode === 'TRADE' && (
+        <div className="trade-page-container">
+          {/* Onboarding Presentation for Non-Logged In Users */}
+          {!user && (
+            <OnboardingHero
+              onLoginClick={() => {
+                setAuthMode('login');
+                setShowAuthModal(true);
+              }}
+              onRegisterClick={() => {
+                setAuthMode('register');
+                setShowAuthModal(true);
+              }}
+            />
+          )}
 
-            {/* Bids (Beli - Hijau) */}
-            <table className="orderbook-table">
-              <tbody>
-                {depth.bids.length === 0 ? (
-                  <tr>
-                    <td colSpan="3" className="orderbook-empty">
-                      Belum ada antrean beli. Buat order BUY untuk menambah likuiditas!
-                    </td>
-                  </tr>
-                ) : (
-                  depth.bids.slice(0, 12).map(([p, v], i) => {
-                    const numP = Number(p);
-                    const numV = Number(v);
-                    const pct = Math.min(100, Math.max(6, Math.round((numV / maxBidVolume) * 100)));
-                    const isUserOrder = userOpenPrices.has(numP.toFixed(2));
-
-                    return (
-                      <tr
-                        key={`bid-${i}-${p}`}
-                        className={`orderbook-row bid-row ${isUserOrder ? 'user-order-active' : ''}`}
-                        onClick={() => {
-                          setPrice(numP.toFixed(2));
-                          setQuantity(numV.toFixed(4));
-                        }}
-                        style={{
-                          background: `linear-gradient(to left, rgba(16, 185, 129, 0.22) ${pct}%, transparent ${pct}%)`,
-                        }}
-                        title={`Klik untuk memasukkan harga: $${numP.toFixed(2)} (Ukuran: ${numV.toFixed(4)} ${baseCoin})`}
-                      >
-                        <td className="price-bid">
-                          {numP.toFixed(2)}
-                          {isUserOrder && <span className="user-order-dot" title="Order aktif milik Anda">● Anda</span>}
-                        </td>
-                        <td>{numV.toFixed(4)}</td>
-                        <td>{(numP * numV).toFixed(2)}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Kolom 2: Chart & User Orders Table */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Chart Header Mockup */}
-          <div className="cex-panel" style={{ height: '360px', padding: '20px', position: 'relative' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>
-                  {selectedMarket.replace('_', ' / ')}
-                </h2>
-                <div style={{ color: 'var(--color-buy)', fontFamily: 'var(--font-mono)', fontSize: '1.8rem', fontWeight: 800 }}>
-                  ${
-                    depth?.bids?.length > 0 && depth?.asks?.length > 0
-                      ? (
-                        (parseFloat(depth.bids[0][0]) + parseFloat(depth.asks[0][0])) / 2
-                      ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                      : '-'
-                  }
+          <div className="main-layout">
+            {/* Kolom 1: Order Book */}
+            <div className="cex-panel orderbook-panel">
+              <div className="panel-header">
+                <div className="panel-title-group">
+                  <span>Order Book</span>
+                  <span className="market-symbol-sub">{selectedMarket}</span>
+                </div>
+                <div className="live-status-pill">
+                  <span className="live-dot-pulse"></span>
+                  <span>L2 DEPTH</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                <div>24h High: <strong style={{ color: 'var(--text-main)' }}>$67,400.00</strong></div>
-                <div>24h Low: <strong style={{ color: 'var(--text-main)' }}>$63,800.00</strong></div>
-                <div>24h Vol: <strong style={{ color: 'var(--text-main)' }}>1,420.50 BTC</strong></div>
+
+              {/* Progress Bar ONLY shows when first time changing currency / initial load */}
+              <div className="orderbook-progress-track">
+                <div className={`orderbook-progress-bar ${isInitialMarketLoad ? 'loading' : ''}`} />
               </div>
-            </div>
 
-            {/* Interactive Grid Canvas simulation */}
-            <div style={{
-              flex: 1,
-              marginTop: '20px',
-              border: '1px dashed var(--border-color)',
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'radial-gradient(circle at center, rgba(59, 130, 246, 0.08) 0%, transparent 70%)',
-              color: 'var(--text-dim)',
-              fontFamily: 'var(--font-mono)'
-            }}>
-              [ Realtime In-Memory Order Engine: Latency &lt; 10 µs | C++ Matching Active ]
-            </div>
-          </div>
+              <div className="orderbook-scroll-content">
+                {/* Header Asks */}
+                <div className="orderbook-sub-header ask-sub-header">
+                  <span>🔴 SELL / ASKS</span>
+                  <span className="sub-count">Top 12</span>
+                </div>
 
-          {/* User Orders & Trade History */}
-          <div className="cex-panel" style={{ flex: 1, minHeight: '260px' }}>
-            <div className="panel-header">
-              <span>Open Orders & Order History</span>
-              {user && <span style={{ color: 'var(--text-dim)' }}>User #{user.id}</span>}
-            </div>
-
-            <div style={{ overflowX: 'auto', padding: '8px' }}>
-              <table className="orderbook-table" style={{ textAlign: 'left' }}>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Pair</th>
-                    <th>Side</th>
-                    <th>Price</th>
-                    <th>Quantity</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.length === 0 ? (
+                {/* Asks (Jual - Merah) */}
+                <table className="orderbook-table">
+                  <thead>
                     <tr>
-                      <td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-dim)' }}>
-                        {user ? 'Belum ada order aktif.' : 'Silakan login untuk melihat riwayat order.'}
-                      </td>
+                      <th>Price ({quoteCoin})</th>
+                      <th>Size ({baseCoin})</th>
+                      <th>Total</th>
                     </tr>
-                  ) : (
-                    orders.map((ord) => (
-                      <tr key={ord.uuid} className="orderbook-row">
-                        <td style={{ color: 'var(--text-dim)' }}>{new Date(ord.created_at).toLocaleTimeString()}</td>
-                        <td><strong>{ord.symbol}</strong></td>
-                        <td className={ord.side === 'BUY' ? 'price-bid' : 'price-ask'}>{ord.side}</td>
-                        <td>{Number(ord.price).toFixed(2)}</td>
-                        <td>{Number(ord.quantity).toFixed(4)}</td>
-                        <td>
-                          <span style={{
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            background: ord.status === 'FILLED' ? 'var(--color-buy-bg)' : 'var(--border-color)',
-                            color: ord.status === 'FILLED' ? 'var(--color-buy)' : 'var(--text-muted)'
-                          }}>
-                            {ord.status}
-                          </span>
-                        </td>
-                        <td>
-                          {['OPEN', 'PENDING', 'PARTIALLY_FILLED'].includes(ord.status) && (
-                            <button
-                              style={{ background: 'transparent', border: '1px solid var(--color-sell)', color: 'var(--color-sell)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}
-                              onClick={() => handleCancelOrder(ord.uuid)}
-                            >
-                              Cancel
-                            </button>
-                          )}
+                  </thead>
+                  <tbody>
+                    {depth.asks.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" className="orderbook-empty">
+                          No sell orders in queue. Place a SELL order to provide liquidity.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+                    ) : (
+                      depth.asks.slice(0, 12).reverse().map(([p, v], i) => {
+                        const numP = Number(p);
+                        const numV = Number(v);
+                        const pct = Math.min(100, Math.max(6, Math.round((numV / maxAskVolume) * 100)));
+                        const isUserOrder = userOpenPrices.has(numP.toFixed(2));
 
-        {/* Kolom 3: Order Form */}
-        <div className="cex-panel">
-          <div className="panel-header">
-            <span>Place Order</span>
-            <span style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Spot Trading</span>
-          </div>
+                        return (
+                          <tr
+                            key={`ask-${i}-${p}`}
+                            className={`orderbook-row ask-row ${isUserOrder ? 'user-order-active' : ''}`}
+                            onClick={() => {
+                              setPrice(numP.toFixed(2));
+                              setQuantity(numV.toFixed(4));
+                            }}
+                            style={{
+                              background: `linear-gradient(to left, rgba(246, 70, 93, 0.22) ${pct}%, transparent ${pct}%)`,
+                            }}
+                            title={`Click to input price: $${numP.toFixed(2)} (Size: ${numV.toFixed(4)} ${baseCoin})`}
+                          >
+                            <td className="price-ask">
+                              {numP.toFixed(2)}
+                              {isUserOrder && <span className="user-order-dot">● You</span>}
+                            </td>
+                            <td>{numV.toFixed(4)}</td>
+                            <td>{(numP * numV).toFixed(2)}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
 
-          <form className="order-form-container" onSubmit={handleOrderSubmit}>
-            {/* BUY / SELL Switch */}
-            <div className="tabs-switch">
-              <button
-                type="button"
-                className={`tab-btn ${orderSide === 'BUY' ? 'active buy' : ''}`}
-                onClick={() => setOrderSide('BUY')}
-              >
-                BUY {baseCoin}
-              </button>
-              <button
-                type="button"
-                className={`tab-btn ${orderSide === 'SELL' ? 'active sell' : ''}`}
-                onClick={() => setOrderSide('SELL')}
-              >
-                SELL {baseCoin}
-              </button>
-            </div>
-
-            {/* LIMIT / MARKET Switch */}
-            <div className="tabs-switch">
-              <button
-                type="button"
-                className={`tab-btn ${orderType === 'LIMIT' ? 'active' : ''}`}
-                onClick={() => setOrderType('LIMIT')}
-              >
-                Limit
-              </button>
-              <button
-                type="button"
-                className={`tab-btn ${orderType === 'MARKET' ? 'active' : ''}`}
-                onClick={() => setOrderType('MARKET')}
-              >
-                Market
-              </button>
-            </div>
-
-            {/* Available Balance display */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              <span>Available:</span>
-              <strong style={{ color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>
-                {orderSide === 'BUY'
-                  ? `${Number(quoteWallet.balance).toFixed(2)} ${quoteCoin}`
-                  : `${Number(baseWallet.balance).toFixed(4)} ${baseCoin}`}
-              </strong>
-            </div>
-
-            {/* Price Field (for Limit order) */}
-            {orderType === 'LIMIT' && (
-              <div className="form-field">
-                <label className="field-label">Order Price</label>
-                <div className="input-group">
-                  <input
-                    type="number"
-                    step="any"
-                    className="cex-input"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    required
-                  />
-                  <span className="input-suffix">{quoteCoin}</span>
+                {/* Mid Price & Spread */}
+                <div className="mid-market-price">
+                  <div className="mid-price-row">
+                    <span className="mid-price-val">
+                      ${highestBid ? highestBid.toFixed(2) : (lowestAsk ? lowestAsk.toFixed(2) : '65,000.00')}
+                    </span>
+                    <span className="trend-arrow">
+                      {lowestAsk && highestBid ? (lowestAsk >= highestBid ? '▲' : '▼') : '—'}
+                    </span>
+                  </div>
+                  <div className="spread-info">
+                    Spread: ${spread.toFixed(2)} ({spreadPct}%)
+                  </div>
                 </div>
-              </div>
-            )}
 
-            {/* Quantity Field */}
-            <div className="form-field">
-              <label className="field-label">Quantity</label>
-              <div className="input-group">
-                <input
-                  type="number"
-                  step="any"
-                  className="cex-input"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  required
+                {/* Header Bids */}
+                <div className="orderbook-sub-header bid-sub-header">
+                  <span>🟢 BUY / BIDS</span>
+                  <span className="sub-count">Top 12</span>
+                </div>
+
+                {/* Bids (Beli - Hijau) */}
+                <table className="orderbook-table">
+                  <tbody>
+                    {depth.bids.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" className="orderbook-empty">
+                          No buy orders in queue. Place a BUY order to provide liquidity.
+                        </td>
+                      </tr>
+                    ) : (
+                      depth.bids.slice(0, 12).map(([p, v], i) => {
+                        const numP = Number(p);
+                        const numV = Number(v);
+                        const pct = Math.min(100, Math.max(6, Math.round((numV / maxBidVolume) * 100)));
+                        const isUserOrder = userOpenPrices.has(numP.toFixed(2));
+
+                        return (
+                          <tr
+                            key={`bid-${i}-${p}`}
+                            className={`orderbook-row bid-row ${isUserOrder ? 'user-order-active' : ''}`}
+                            onClick={() => {
+                              setPrice(numP.toFixed(2));
+                              setQuantity(numV.toFixed(4));
+                            }}
+                            style={{
+                              background: `linear-gradient(to left, rgba(14, 203, 129, 0.22) ${pct}%, transparent ${pct}%)`,
+                            }}
+                            title={`Click to input price: $${numP.toFixed(2)} (Size: ${numV.toFixed(4)} ${baseCoin})`}
+                          >
+                            <td className="price-bid">
+                              {numP.toFixed(2)}
+                              {isUserOrder && <span className="user-order-dot">● You</span>}
+                            </td>
+                            <td>{numV.toFixed(4)}</td>
+                            <td>{(numP * numV).toFixed(2)}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Kolom 2: Chart & User Orders Table */}
+            <div className="middle-column-container">
+              {/* Chart Header Card */}
+              <div className="cex-panel chart-mockup-panel">
+                <div className="chart-header-row">
+                  <div>
+                    <h2 className="chart-pair-title">
+                      {selectedMarket.replace('_', ' / ')}
+                    </h2>
+                    <div className="chart-live-price">
+                      ${
+                        depth?.bids?.length > 0 && depth?.asks?.length > 0
+                          ? (
+                            (parseFloat(depth.bids[0][0]) + parseFloat(depth.asks[0][0])) / 2
+                          ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : (currentMarket.last_price || '65,000.00')
+                      }
+                    </div>
+                  </div>
+                  <div className="chart-metrics-24h">
+                    <div>Maker Fee: <strong>{(makerFeeRate * 100).toFixed(2)}%</strong></div>
+                    <div>Taker Fee: <strong>{(takerFeeRate * 100).toFixed(2)}%</strong></div>
+                    <div>Engine: <strong>C++ Microsecond</strong></div>
+                  </div>
+                </div>
+
+                {/* Interactive Multi-Timeframe Candlestick & Volume Chart */}
+                <CandlestickChart
+                  symbol={selectedMarket}
+                  currentPrice={
+                    depth?.bids?.length > 0 && depth?.asks?.length > 0
+                      ? (parseFloat(depth.bids[0][0]) + parseFloat(depth.asks[0][0])) / 2
+                      : currentMarket.last_price
+                  }
                 />
-                <span className="input-suffix">{baseCoin}</span>
-              </div>
-            </div>
 
-            {/* Total Order Notional */}
-            {orderType === 'LIMIT' && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '6px 0', borderTop: '1px solid var(--border-color)' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Total:</span>
-                <strong style={{ fontFamily: 'var(--font-mono)' }}>
-                  {(Number(price || 0) * Number(quantity || 0)).toFixed(2)} {quoteCoin}
-                </strong>
-              </div>
-            )}
-
-            {formError && (
-              <div style={{ padding: '8px 12px', background: 'var(--color-sell-bg)', color: 'var(--color-sell)', borderRadius: '6px', fontSize: '0.8rem' }}>
-                {formError}
-              </div>
-            )}
-            {formSuccess && (
-              <div style={{ padding: '8px 12px', background: 'var(--color-buy-bg)', color: 'var(--color-buy)', borderRadius: '6px', fontSize: '0.8rem' }}>
-                {formSuccess}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className={`action-btn ${orderSide.toLowerCase()}`}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? 'Placing Order...' : `${orderSide} ${baseCoin}`}
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* 3. Modal Wallet / Assets */}
-      {showWalletModal && (
-        <div className="modal-overlay" onClick={() => setShowWalletModal(false)}>
-          <div className="modal-box" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>💼 Wallet & Balances</span>
-              <button className="close-btn" onClick={() => setShowWalletModal(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              {/* Balances List */}
-              <table className="orderbook-table" style={{ textAlign: 'left' }}>
-                <thead>
-                  <tr>
-                    <th>Asset</th>
-                    <th>Available</th>
-                    <th>Locked</th>
-                    <th>Total</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {wallets.map((w) => (
-                    <tr key={w.currency} className="orderbook-row">
-                      <td><strong>{w.currency}</strong></td>
-                      <td style={{ color: 'var(--color-buy)' }}>{Number(w.balance).toFixed(4)}</td>
-                      <td style={{ color: 'var(--text-dim)' }}>{Number(w.locked).toFixed(4)}</td>
-                      <td><strong>{Number(w.total).toFixed(4)}</strong></td>
-                      <td>
-                        <button
-                          className="btn-secondary"
-                          style={{ padding: '3px 8px', fontSize: '0.75rem', marginRight: '4px' }}
-                          onClick={() => handleGetDepositAddress(w.currency)}
-                        >
-                          Deposit
-                        </button>
-                        <button
-                          className="btn-secondary"
-                          style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                          onClick={() => handleFaucet(w.currency, w.currency === 'USDT' ? '1000' : '0.5')}
-                        >
-                          +Faucet
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {/* Deposit Address Box */}
-              {depositAddress && (
-                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    Alamat Deposit ({depositAddress.currency} - {depositAddress.network}):
+                <div className="chart-footer-stream">
+                  <div className="matching-engine-badge">
+                    ⚡ C++ In-Memory Engine | Sub-10µs Execution | Redis Stream
                   </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--color-primary)', wordBreak: 'break-all', marginTop: '4px' }}>
-                    {depositAddress.address}
+                  <div className="recent-trades-preview">
+                    <span className="preview-label">Live Trades:</span>
+                    {recentTrades.slice(0, 4).map((t, i) => (
+                      <span key={i} className={`mini-trade ${t.side === 'BUY' ? 'text-buy' : 'text-sell'}`}>
+                        ${parseFloat(t.price).toFixed(2)} ({parseFloat(t.quantity).toFixed(3)})
+                      </span>
+                    ))}
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* Withdrawal Box */}
-              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                <h4 style={{ fontSize: '0.9rem', marginBottom: '8px' }}>Request Withdrawal</h4>
-                <form onSubmit={handleWithdrawSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <select
-                      className="cex-input"
-                      style={{ width: '100px' }}
-                      value={withdrawCurrency}
-                      onChange={(e) => setWithdrawCurrency(e.target.value)}
-                    >
-                      <option value="USDT">USDT</option>
-                      <option value="BTC">BTC</option>
-                      <option value="ETH">ETH</option>
-                    </select>
-                    <input
-                      type="text"
-                      placeholder="Destination Address (0x...)"
-                      className="cex-input"
-                      value={withdrawAddress}
-                      onChange={(e) => setWithdrawAddress(e.target.value)}
-                      required
-                    />
+              {/* User Orders & History */}
+              <div className="cex-panel orders-history-panel">
+                <div className="panel-header">
+                  <div className="panel-title-group">
+                    <span>Open Orders & Order History</span>
+                    {user && <span className="user-id-sub">Account #{user.id}</span>}
+                  </div>
+                  {user && (
+                    <button className="btn-xs-refresh" onClick={loadUserOrders}>
+                      Refresh
+                    </button>
+                  )}
+                </div>
+
+                <div className="table-responsive-box">
+                  <table className="orderbook-table orders-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Pair</th>
+                        <th>Side</th>
+                        <th>Type</th>
+                        <th>Price</th>
+                        <th>Quantity</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orders.length === 0 ? (
+                        <tr>
+                          <td colSpan="8" className="orders-empty-cell">
+                            {user ? 'No active orders for this pair.' : 'Please sign in to view and manage your orders.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        orders.map((ord) => (
+                          <tr key={ord.uuid} className="orderbook-row">
+                            <td className="text-dim">{new Date(ord.created_at).toLocaleTimeString()}</td>
+                            <td><strong>{ord.symbol}</strong></td>
+                            <td className={ord.side === 'BUY' ? 'price-bid font-bold' : 'price-ask font-bold'}>
+                              {ord.side}
+                            </td>
+                            <td className="text-dim">{ord.type || 'LIMIT'}</td>
+                            <td>{Number(ord.price).toFixed(2)}</td>
+                            <td>{Number(ord.quantity).toFixed(4)}</td>
+                            <td>
+                              <span className={`status-pill status-${ord.status.toLowerCase()}`}>
+                                {ord.status}
+                              </span>
+                            </td>
+                            <td>
+                              {['OPEN', 'PENDING', 'PARTIALLY_FILLED'].includes(ord.status) && (
+                                <button
+                                  className="btn-cancel-order"
+                                  onClick={() => handleCancelOrder(ord.uuid)}
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Kolom 3: Order Form with Auto Fee Calculation */}
+            <div className="cex-panel order-form-panel">
+              <div className="panel-header">
+                <span>Place Order</span>
+                <span className="order-form-sub">Spot Trading</span>
+              </div>
+
+              <form className="order-form-container" onSubmit={handleOrderSubmit}>
+                {/* BUY / SELL Switch */}
+                <div className="tabs-switch">
+                  <button
+                    type="button"
+                    className={`tab-btn ${orderSide === 'BUY' ? 'active buy' : ''}`}
+                    onClick={() => setOrderSide('BUY')}
+                  >
+                    BUY {baseCoin}
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${orderSide === 'SELL' ? 'active sell' : ''}`}
+                    onClick={() => setOrderSide('SELL')}
+                  >
+                    SELL {baseCoin}
+                  </button>
+                </div>
+
+                {/* LIMIT / MARKET Switch */}
+                <div className="tabs-switch secondary-switch">
+                  <button
+                    type="button"
+                    className={`tab-btn ${orderType === 'LIMIT' ? 'active' : ''}`}
+                    onClick={() => setOrderType('LIMIT')}
+                  >
+                    Limit (Maker)
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${orderType === 'MARKET' ? 'active' : ''}`}
+                    onClick={() => setOrderType('MARKET')}
+                  >
+                    Market (Taker)
+                  </button>
+                </div>
+
+                {/* Available Balance display */}
+                <div className="form-available-row">
+                  <span>Available:</span>
+                  <strong className="available-amount">
+                    {orderSide === 'BUY'
+                      ? `${Number(quoteWallet.balance || 0).toFixed(2)} ${quoteCoin}`
+                      : `${Number(baseWallet.balance || 0).toFixed(4)} ${baseCoin}`}
+                  </strong>
+                </div>
+
+                {/* Price Field */}
+                {orderType === 'LIMIT' ? (
+                  <div className="form-field">
+                    <label className="field-label">Order Price ({quoteCoin})</label>
+                    <div className="input-group">
+                      <input
+                        type="number"
+                        step="any"
+                        className="cex-input"
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        required
+                      />
+                      <span className="input-suffix">{quoteCoin}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="market-price-indicator">
+                    <span className="field-label">Market Execution Price:</span>
+                    <strong className="indicator-price">
+                      Best Available Market Price (≈ ${midPrice.toFixed(2)})
+                    </strong>
+                  </div>
+                )}
+
+                {/* Quantity Field */}
+                <div className="form-field">
+                  <label className="field-label">Order Quantity ({baseCoin})</label>
+                  <div className="input-group">
                     <input
                       type="number"
                       step="any"
-                      placeholder="Amount"
                       className="cex-input"
-                      style={{ width: '120px' }}
-                      value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
                       required
                     />
+                    <span className="input-suffix">{baseCoin}</span>
                   </div>
-                  {withdrawStatus && <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)' }}>{withdrawStatus}</div>}
-                  <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>
-                    Submit Withdrawal
-                  </button>
-                </form>
-              </div>
+                </div>
+
+                {/* Auto Calculated Fees & Total Breakdown */}
+                <div className="order-fee-calculation-box">
+                  <div className="calc-row">
+                    <span>Order Notional:</span>
+                    <strong className="calc-val">${rawNotional.toFixed(2)} {quoteCoin}</strong>
+                  </div>
+                  <div className="calc-row fee-highlight-row">
+                    <span className="fee-type-badge">
+                      Est. {feeTypeLabel} Fee ({(activeFeeRate * 100).toFixed(2)}%):
+                    </span>
+                    <span className="fee-amount">${estimatedFeeAmount.toFixed(4)} {quoteCoin}</span>
+                  </div>
+                  <div className="calc-row total-row">
+                    <span>{orderSide === 'BUY' ? 'Estimated Total Required:' : 'Estimated Net Proceeds:'}</span>
+                    <strong className="total-val-highlight">
+                      ${totalWithFee.toFixed(2)} {quoteCoin}
+                    </strong>
+                  </div>
+                </div>
+
+                {formError && (
+                  <div className="form-alert alert-error">
+                    {formError}
+                  </div>
+                )}
+                {formSuccess && (
+                  <div className="form-alert alert-success">
+                    {formSuccess}
+                  </div>
+                )}
+
+                {user?.role === 'ADMIN' && (
+                  <div className="admin-trade-restricted-banner">
+                    🛡️ Administrator accounts are restricted from spot trading by compliance policy.
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className={`action-btn ${orderSide.toLowerCase()}`}
+                  disabled={isSubmitting || user?.role === 'ADMIN'}
+                >
+                  {user?.role === 'ADMIN'
+                    ? 'Trading Disabled (Admin Account)'
+                    : isSubmitting
+                    ? 'Executing Order...'
+                    : user
+                    ? `${orderSide} ${baseCoin}`
+                    : `Sign In to ${orderSide}`}
+                </button>
+              </form>
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. Modal Login / Register */}
+      {/* 3. PRODUCTION AUTHENTICATION MODAL (ZERO DEMO BUTTONS) */}
       {showAuthModal && (
         <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span>{authMode === 'login' ? 'Login Trader' : 'Register Account'}</span>
+              <span>{authMode === 'login' ? 'Sign In to Your Account' : 'Create Exchange Account'}</span>
               <button className="close-btn" onClick={() => setShowAuthModal(false)}>✕</button>
             </div>
             <form className="modal-body" onSubmit={handleAuthSubmit}>
@@ -780,7 +894,7 @@ export default function App() {
                   className={`tab-btn ${authMode === 'login' ? 'active' : ''}`}
                   onClick={() => setAuthMode('login')}
                 >
-                  Login
+                  Sign In
                 </button>
                 <button
                   type="button"
@@ -796,7 +910,8 @@ export default function App() {
                   <label className="field-label">Full Name</label>
                   <input
                     type="text"
-                    className="cex-input"
+                    className="cex-input modal-input"
+                    placeholder="Enter your legal full name"
                     value={authName}
                     onChange={(e) => setAuthName(e.target.value)}
                     required
@@ -808,7 +923,8 @@ export default function App() {
                 <label className="field-label">Email Address</label>
                 <input
                   type="email"
-                  className="cex-input"
+                  className="cex-input modal-input"
+                  placeholder="name@example.com"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
                   required
@@ -819,7 +935,8 @@ export default function App() {
                 <label className="field-label">Password</label>
                 <input
                   type="password"
-                  className="cex-input"
+                  className="cex-input modal-input"
+                  placeholder="Enter your secure password"
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   required
@@ -827,10 +944,10 @@ export default function App() {
               </div>
 
               {authError && (
-                <div style={{ color: 'var(--color-sell)', fontSize: '0.8rem' }}>{authError}</div>
+                <div className="form-alert alert-error">{authError}</div>
               )}
 
-              <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px' }}>
+              <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px', marginTop: '6px' }}>
                 {authMode === 'login' ? 'Sign In' : 'Create Account'}
               </button>
             </form>

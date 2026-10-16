@@ -52,6 +52,13 @@ class OrderController extends Controller
             ], 403);
         }
 
+        if ($user->isAdmin()) {
+            return response()->json([
+                'message' => 'Trading restricted',
+                'error' => 'Administrator accounts are restricted from trading.',
+            ], 403);
+        }
+
         $symbol = strtoupper($validated['symbol']);
         $pair = TradingPair::with(['baseCurrency', 'quoteCurrency'])
             ->where('symbol', $symbol)

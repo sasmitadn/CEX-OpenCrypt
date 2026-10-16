@@ -36,6 +36,8 @@ class MarketController extends Controller
                 'price_precision' => $pair->price_precision,
                 'quantity_precision' => $pair->quantity_precision,
                 'min_order_quantity' => $pair->min_order_quantity,
+                'maker_fee_rate' => $pair->maker_fee_rate,
+                'taker_fee_rate' => $pair->taker_fee_rate,
                 'status' => $pair->status,
             ];
         });
@@ -113,6 +115,31 @@ class MarketController extends Controller
         return response()->json([
             'success' => true,
             'data' => $trades,
+        ]);
+    }
+
+    /**
+     * GET /api/v1/markets/{symbol}/candles
+     * Data grafik OHLCV fleksibel dengan timeframe dinamis (1m, 5m, 15m, 30m, 1j, 4j, 1d, 1w, 1M, 1y)
+     */
+    public function candles(Request $request, string $symbol, \App\Services\CandleService $candleService): JsonResponse
+    {
+        $pair = TradingPair::where('symbol', strtoupper($symbol))->firstOrFail();
+        $timeframe = (string) $request->query('timeframe', '1m');
+        $limit = (int) $request->query('limit', 150);
+        $startTime = $request->has('start') ? (int) $request->query('start') : null;
+        $endTime = $request->has('end') ? (int) $request->query('end') : null;
+
+        $candles = $candleService->getCandles($pair, $timeframe, $limit, $startTime, $endTime);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'symbol' => $pair->symbol,
+                'timeframe' => $timeframe,
+                'interval_seconds' => $candleService->resolveInterval($timeframe),
+                'candles' => $candles,
+            ],
         ]);
     }
 }

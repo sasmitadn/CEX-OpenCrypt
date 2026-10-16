@@ -65,14 +65,19 @@ class GrpcServer {
    */
   async generateDepositAddress(call, callback) {
     try {
-      const { user_id, network } = call.request;
-      const net = (network || config.defaultNetwork).toUpperCase();
+      const { user_id, network, currency } = call.request;
+      const net = (network || config.defaultNetwork || 'ETH').toUpperCase();
 
-      // Cari default currency untuk network (misal ETH untuk SEPOLIA/ETH)
+      // Cari currency id yang sesuai
+      let currencyId = 1;
+      const targetCode = currency ? currency.toUpperCase() : (net === 'BTC' ? 'BTC' : 'ETH');
       const currRes = await db.query(
-        `SELECT id FROM currencies WHERE code = 'ETH' OR code = 'BTC' LIMIT 1`
+        `SELECT id FROM currencies WHERE code = $1 LIMIT 1`,
+        [targetCode]
       );
-      const currencyId = currRes.rows.length > 0 ? currRes.rows[0].id : 1;
+      if (currRes.rows.length > 0) {
+        currencyId = currRes.rows[0].id;
+      }
 
       const record = await addressGenerator.getOrCreateDepositAddress(user_id, currencyId, net);
 

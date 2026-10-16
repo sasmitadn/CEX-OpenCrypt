@@ -19,8 +19,8 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 1. Currencies
-        $btc = Currency::firstOrCreate(
+        // 1. Currencies with multi-network support
+        $btc = Currency::updateOrCreate(
             ['code' => 'BTC'],
             [
                 'name' => 'Bitcoin',
@@ -33,10 +33,13 @@ class DatabaseSeeder extends Seeder
                 'is_withdraw_enabled' => true,
                 'is_trading_enabled' => true,
                 'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'BTC', 'name' => 'Bitcoin Mainnet / Testnet', 'confirmation_blocks' => 2]
+                ],
             ]
         );
 
-        $eth = Currency::firstOrCreate(
+        $eth = Currency::updateOrCreate(
             ['code' => 'ETH'],
             [
                 'name' => 'Ethereum',
@@ -49,10 +52,14 @@ class DatabaseSeeder extends Seeder
                 'is_withdraw_enabled' => true,
                 'is_trading_enabled' => true,
                 'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'ETH', 'name' => 'Ethereum (ERC-20 / Sepolia)', 'confirmation_blocks' => 12],
+                    ['network' => 'ARB', 'name' => 'Arbitrum One (L2)', 'confirmation_blocks' => 1]
+                ],
             ]
         );
 
-        $usdt = Currency::firstOrCreate(
+        $usdt = Currency::updateOrCreate(
             ['code' => 'USDT'],
             [
                 'name' => 'Tether USD',
@@ -65,6 +72,91 @@ class DatabaseSeeder extends Seeder
                 'is_withdraw_enabled' => true,
                 'is_trading_enabled' => true,
                 'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'ETH', 'name' => 'Ethereum (ERC-20)', 'confirmation_blocks' => 12],
+                    ['network' => 'ARB', 'name' => 'Arbitrum One', 'confirmation_blocks' => 1],
+                    ['network' => 'MATIC', 'name' => 'Polygon PoS', 'confirmation_blocks' => 64],
+                    ['network' => 'BNB', 'name' => 'BNB Smart Chain (BEP-20)', 'confirmation_blocks' => 15],
+                    ['network' => 'AVAX', 'name' => 'Avalanche C-Chain', 'confirmation_blocks' => 1],
+                ],
+            ]
+        );
+
+        $arb = Currency::updateOrCreate(
+            ['code' => 'ARB'],
+            [
+                'name' => 'Arbitrum',
+                'type' => 'CRYPTO',
+                'decimals' => 18,
+                'min_deposit' => '1.000000000000000000',
+                'min_withdraw' => '5.000000000000000000',
+                'withdraw_fee' => '0.500000000000000000',
+                'is_deposit_enabled' => true,
+                'is_withdraw_enabled' => true,
+                'is_trading_enabled' => true,
+                'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'ARB', 'name' => 'Arbitrum One', 'confirmation_blocks' => 1],
+                    ['network' => 'ETH', 'name' => 'Ethereum (ERC-20)', 'confirmation_blocks' => 12],
+                ],
+            ]
+        );
+
+        $matic = Currency::updateOrCreate(
+            ['code' => 'MATIC'],
+            [
+                'name' => 'Polygon',
+                'type' => 'CRYPTO',
+                'decimals' => 18,
+                'min_deposit' => '1.000000000000000000',
+                'min_withdraw' => '5.000000000000000000',
+                'withdraw_fee' => '0.200000000000000000',
+                'is_deposit_enabled' => true,
+                'is_withdraw_enabled' => true,
+                'is_trading_enabled' => true,
+                'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'MATIC', 'name' => 'Polygon PoS', 'confirmation_blocks' => 64],
+                    ['network' => 'ETH', 'name' => 'Ethereum (ERC-20)', 'confirmation_blocks' => 12],
+                ],
+            ]
+        );
+
+        $bnb = Currency::updateOrCreate(
+            ['code' => 'BNB'],
+            [
+                'name' => 'BNB Chain',
+                'type' => 'CRYPTO',
+                'decimals' => 18,
+                'min_deposit' => '0.010000000000000000',
+                'min_withdraw' => '0.020000000000000000',
+                'withdraw_fee' => '0.001000000000000000',
+                'is_deposit_enabled' => true,
+                'is_withdraw_enabled' => true,
+                'is_trading_enabled' => true,
+                'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'BNB', 'name' => 'BNB Smart Chain (BEP-20)', 'confirmation_blocks' => 15],
+                ],
+            ]
+        );
+
+        $avax = Currency::updateOrCreate(
+            ['code' => 'AVAX'],
+            [
+                'name' => 'Avalanche',
+                'type' => 'CRYPTO',
+                'decimals' => 18,
+                'min_deposit' => '0.100000000000000000',
+                'min_withdraw' => '0.200000000000000000',
+                'withdraw_fee' => '0.010000000000000000',
+                'is_deposit_enabled' => true,
+                'is_withdraw_enabled' => true,
+                'is_trading_enabled' => true,
+                'status' => 'ACTIVE',
+                'networks' => [
+                    ['network' => 'AVAX', 'name' => 'Avalanche C-Chain', 'confirmation_blocks' => 1],
+                ],
             ]
         );
 
@@ -78,8 +170,8 @@ class DatabaseSeeder extends Seeder
                 'quantity_precision' => 6,
                 'min_order_quantity' => '0.000100000000000000',
                 'min_order_notional' => '10.000000000000000000',
-                'maker_fee_rate' => '0.001000',
-                'taker_fee_rate' => '0.002000',
+                'maker_fee_rate' => '0.001000', // 0.10%
+                'taker_fee_rate' => '0.002000', // 0.20%
                 'status' => 'TRADING',
             ]
         );
@@ -99,42 +191,111 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // 3. Demo User
+        TradingPair::firstOrCreate(
+            ['symbol' => 'ARB_USDT'],
+            [
+                'base_currency_id' => $arb->id,
+                'quote_currency_id' => $usdt->id,
+                'price_precision' => 4,
+                'quantity_precision' => 2,
+                'min_order_quantity' => '1.000000000000000000',
+                'min_order_notional' => '5.000000000000000000',
+                'maker_fee_rate' => '0.001000',
+                'taker_fee_rate' => '0.002000',
+                'status' => 'TRADING',
+            ]
+        );
+
+        TradingPair::firstOrCreate(
+            ['symbol' => 'MATIC_USDT'],
+            [
+                'base_currency_id' => $matic->id,
+                'quote_currency_id' => $usdt->id,
+                'price_precision' => 4,
+                'quantity_precision' => 2,
+                'min_order_quantity' => '1.000000000000000000',
+                'min_order_notional' => '5.000000000000000000',
+                'maker_fee_rate' => '0.001000',
+                'taker_fee_rate' => '0.002000',
+                'status' => 'TRADING',
+            ]
+        );
+
+        TradingPair::firstOrCreate(
+            ['symbol' => 'BNB_USDT'],
+            [
+                'base_currency_id' => $bnb->id,
+                'quote_currency_id' => $usdt->id,
+                'price_precision' => 2,
+                'quantity_precision' => 4,
+                'min_order_quantity' => '0.010000000000000000',
+                'min_order_notional' => '10.000000000000000000',
+                'maker_fee_rate' => '0.001000',
+                'taker_fee_rate' => '0.002000',
+                'status' => 'TRADING',
+            ]
+        );
+
+        TradingPair::firstOrCreate(
+            ['symbol' => 'AVAX_USDT'],
+            [
+                'base_currency_id' => $avax->id,
+                'quote_currency_id' => $usdt->id,
+                'price_precision' => 2,
+                'quantity_precision' => 4,
+                'min_order_quantity' => '0.100000000000000000',
+                'min_order_notional' => '10.000000000000000000',
+                'maker_fee_rate' => '0.001000',
+                'taker_fee_rate' => '0.002000',
+                'status' => 'TRADING',
+            ]
+        );
+
+        // 3. Admin User (Requested: admin@gmail.com / admin)
+        User::updateOrCreate(
+            ['email' => 'admin@gmail.com'],
+            [
+                'name' => 'Super Administrator',
+                'password' => Hash::make('admin'),
+                'role' => 'ADMIN',
+                'status' => 'ACTIVE',
+                'kyc_level' => 3,
+            ]
+        );
+
+        // 4. Demo Trader User
         $user = User::firstOrCreate(
             ['email' => 'trader@cex.com'],
             [
                 'name' => 'Pro Trader',
                 'password' => Hash::make('password123'),
+                'role' => 'TRADER',
                 'status' => 'ACTIVE',
                 'kyc_level' => 2,
             ]
         );
 
-        // 4. Inisialisasi Saldo Awal Demo untuk Trader
+        // 5. Inisialisasi Saldo Awal Demo untuk Trader
         $balanceService = app(BalanceService::class);
 
-        $btcWallet = Wallet::firstOrCreate(
-            ['user_id' => $user->id, 'currency_id' => $btc->id, 'type' => 'SPOT'],
-            ['uuid' => (string) Str::uuid(), 'balance' => '0', 'locked_balance' => '0', 'status' => 'ACTIVE']
-        );
-        if (bccomp($btcWallet->balance, '0', 18) === 0) {
-            $balanceService->depositCredit($user->id, $btc, '2.500000000000000000', 'INIT_BTC_SEED');
-        }
+        $coins = [
+            [$btc, '2.500000000000000000', 'INIT_BTC_SEED'],
+            [$eth, '25.000000000000000000', 'INIT_ETH_SEED'],
+            [$usdt, '100000.000000000000000000', 'INIT_USDT_SEED'],
+            [$arb, '5000.000000000000000000', 'INIT_ARB_SEED'],
+            [$matic, '10000.000000000000000000', 'INIT_MATIC_SEED'],
+            [$bnb, '50.000000000000000000', 'INIT_BNB_SEED'],
+            [$avax, '150.000000000000000000', 'INIT_AVAX_SEED'],
+        ];
 
-        $ethWallet = Wallet::firstOrCreate(
-            ['user_id' => $user->id, 'currency_id' => $eth->id, 'type' => 'SPOT'],
-            ['uuid' => (string) Str::uuid(), 'balance' => '0', 'locked_balance' => '0', 'status' => 'ACTIVE']
-        );
-        if (bccomp($ethWallet->balance, '0', 18) === 0) {
-            $balanceService->depositCredit($user->id, $eth, '25.000000000000000000', 'INIT_ETH_SEED');
-        }
-
-        $usdtWallet = Wallet::firstOrCreate(
-            ['user_id' => $user->id, 'currency_id' => $usdt->id, 'type' => 'SPOT'],
-            ['uuid' => (string) Str::uuid(), 'balance' => '0', 'locked_balance' => '0', 'status' => 'ACTIVE']
-        );
-        if (bccomp($usdtWallet->balance, '0', 18) === 0) {
-            $balanceService->depositCredit($user->id, $usdt, '100000.000000000000000000', 'INIT_USDT_SEED');
+        foreach ($coins as [$coin, $amt, $txHash]) {
+            $wallet = Wallet::firstOrCreate(
+                ['user_id' => $user->id, 'currency_id' => $coin->id, 'type' => 'SPOT'],
+                ['uuid' => (string) Str::uuid(), 'balance' => '0', 'locked_balance' => '0', 'status' => 'ACTIVE']
+            );
+            if (bccomp($wallet->balance, '0', 18) === 0) {
+                $balanceService->depositCredit($user->id, $coin, $amt, $txHash);
+            }
         }
 
         // 5. Seed Starter Liquidity Orders (Market Maker)
@@ -196,6 +357,23 @@ class DatabaseSeeder extends Seeder
                     'locked_currency_id' => $btc->id,
                     'status' => 'OPEN',
                 ]);
+            }
+        }
+
+        // 6. Seed Realistic 1-Minute OHLCV Historical Candles for Charts
+        $candleService = app(\App\Services\CandleService::class);
+        $pairPrices = [
+            'BTC_USDT' => 64850.00,
+            'ETH_USDT' => 3480.00,
+            'ARB_USDT' => 0.88,
+            'MATIC_USDT' => 0.54,
+            'BNB_USDT' => 595.00,
+            'AVAX_USDT' => 28.50,
+        ];
+        foreach ($pairPrices as $sym => $basePrice) {
+            $p = TradingPair::where('symbol', $sym)->first();
+            if ($p) {
+                $candleService->seedHistoricalCandles($p, $basePrice, 2880); // 48 hours of 1m continuous candles
             }
         }
     }

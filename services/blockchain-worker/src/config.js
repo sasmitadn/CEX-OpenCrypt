@@ -25,42 +25,11 @@ module.exports = {
 
   // Blockchain Networks & RPCs
   networks: {
-    SEPOLIA: {
-      name: 'SEPOLIA',
-      chainId: 11155111,
-      rpcUrl: process.env.RPC_ETH_SEPOLIA || 'https://rpc.sepolia.org',
-      requiredConfirmations: 2, // Sepolia block time ~12s
-      blockTimeMs: 12000,
-      nativeCurrency: 'ETH',
-      tokens: {
-        USDT: {
-          address: (process.env.USDT_CONTRACT_SEPOLIA || '0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0').toLowerCase(),
-          decimals: 6,
-          symbol: 'USDT',
-        },
-      },
-    },
-    ETH_MAINNET: {
-      name: 'ETH',
-      chainId: 1,
-      rpcUrl: process.env.RPC_ETH_MAINNET || 'https://rpc.ankr.com/eth',
-      requiredConfirmations: 12,
-      blockTimeMs: 12000,
-      nativeCurrency: 'ETH',
-      tokens: {},
-    },
-    BSC_MAINNET: {
-      name: 'BSC',
-      chainId: 56,
-      rpcUrl: process.env.RPC_BSC_MAINNET || 'https://rpc.ankr.com/bsc',
-      requiredConfirmations: 15,
-      blockTimeMs: 3000,
-      nativeCurrency: 'BNB',
-      tokens: {},
-    },
+    ...require('./services/networkConfig'),
+    SEPOLIA: require('./services/networkConfig').ETH, // Backward compatibility alias
   },
 
-  defaultNetwork: process.env.NETWORK_DEFAULT || 'SEPOLIA',
+  defaultNetwork: process.env.NETWORK_DEFAULT || 'ETH',
 
   // HD Wallet Configuration (Master xPub / Mnemonic)
   hdWallet: {
